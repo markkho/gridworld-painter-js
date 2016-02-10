@@ -1,0 +1,22 @@
+{
+  "name": "gridworld-painter",
+  "version": "0.0.1",
+  "description": "A module for rendering and modifying rendered gridworlds in the browser.",
+  "main": "gridworld_painter.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markkho/gridworld-painter-js.git"
+  },
+  "keywords": [
+    "gridworld"
+  ],
+  "author": "Mark Ho <mark_ho@brown.edu>",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/markkho/gridworld-painter-js/issues"
+  },
+  "homepage": "https://github.com/markkho/gridworld-painter-js#readme"
+}
