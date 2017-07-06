@@ -5,7 +5,7 @@
    TODO:
    - use promises instead of timing?
 
-==============================================================================*/
+=============================================================================*/
 
 var Raphael = require('raphael');
 var _ = require('lodash');
@@ -44,10 +44,10 @@ var default_config = {
 	SPRITE_STEPPING_FRAME_TIME : 100,
 	SPRITE_MOVING_FRAME_TIME : 50,
 	SPRITE_CIRCLING_FRAME_TIME : 250
-}
+};
 
 var GridWorldPainter = function (width, height, container, config) {
-	config = typeof(config) == 'undefined' ? {} : config;
+	config = typeof(config) === 'undefined' ? {} : config;
 	_.defaults(config, default_config);
 	for (var key in config) {
 		this[key] = config[key];
@@ -81,19 +81,19 @@ GridWorldPainter.prototype.initialize_paper = function () {
 }
 
 
-/*================================================================================================
+/*=============================================================================
 
 
-								Drawing Tiles, Text, and Walls
+					Drawing Tiles, Text, and Walls
 
 
-================================================================================================*/
+=============================================================================*/
 GridWorldPainter.prototype.draw_tiles = function (tile_params) {
 	//tile_params is a mapping from states to raphael parameters
 	var painter = this;
 
 	//clear tiles before redrawing
-	if (typeof(painter.tiles) != 'undefined') {
+	if (typeof(painter.tiles) !== 'undefined') {
 		_(painter.tiles).forEach(function (tile) {
 			tile.remove();
 		});
@@ -101,7 +101,7 @@ GridWorldPainter.prototype.draw_tiles = function (tile_params) {
 	painter.tiles = [];
 
 	var states = product([_.range(painter.width), _.range(painter.height)]);
-	if (typeof(tile_params) == 'undefined') {
+	if (typeof(tile_params) === 'undefined') {
 		tile_params = _.fromPairs(_.map(states, function (s) {return [s, {}]}));
 	}
 	else {
@@ -142,7 +142,7 @@ GridWorldPainter.prototype.add_text = function(x, y, text) {
 		"font-size" : painter.TILE_SIZE/text.length
 	}
 	var mytext = painter.paper.add([params])[0];
-	painter.annotations = typeof(painter.annotations) == 'undefined' ? [] : painter.annotations;
+	painter.annotations = typeof(painter.annotations) === 'undefined' ? [] : painter.annotations;
 	painter.annotations.push(mytext);
 }
 
@@ -154,7 +154,7 @@ GridWorldPainter.prototype.float_text = function(x, y, text, params) {
 		y : (painter.y_to_h(y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
 		text : text,
 		"font-size" : painter.TILE_SIZE/text.length
-	}
+	};
 	_.merge(start_params, params);
 	var mytext = painter.paper.add([start_params])[0];
 
@@ -166,10 +166,11 @@ GridWorldPainter.prototype.float_text = function(x, y, text, params) {
 		});
 	mytext.animate(animate);
 	return painter.REWARD_DISPLAY_TIME
-}
+};
 
-GridWorldPainter.prototype.float_image = function(x, y, src, width, height, display_time, params) {
-	display_time = typeof(display_time) == 'undefined' ? this.REWARD_DISPLAY_TIME : display_time;
+GridWorldPainter.prototype.float_image = function(x, y, src, width, height,
+                                                  display_time, params) {
+	display_time = typeof(display_time) === 'undefined' ? this.REWARD_DISPLAY_TIME : display_time;
 	var start_params = {
 		type : 'image',
 		x : (x + .5)*this.TILE_SIZE+this.DISPLAY_BORDER-width/2,
@@ -193,16 +194,16 @@ GridWorldPainter.prototype.float_image = function(x, y, src, width, height, disp
 }
 
 GridWorldPainter.prototype.draw_wall = function(x,y,side, params) {
-	params = typeof(params) == 'undefined' ? {} : params;
+	params = typeof(params) === 'undefined' ? {} : params;
 	var painter = this;
 	var wall_width = .025;
 	y = painter.y_to_h(y);
 
-	if (typeof(painter.walls) == 'undefined') {
+	if (typeof(painter.walls) === 'undefined') {
 		painter.walls = [];
 	}
 
-	if (typeof(side) == 'undefined') {
+	if (typeof(side) === 'undefined') {
 		var default_wall_params = {
 			fill : 'black',
 			type : 'rect',
@@ -216,29 +217,30 @@ GridWorldPainter.prototype.draw_wall = function(x,y,side, params) {
 		var wall = painter.paper.add([params])[0];
 		painter.tiles.push(wall);
 	} else {
-		if (side == '>') {
-			var start_x = x + 1 - wall_width/2;
-			var start_y = y;
-			var end_x = x + 1 - wall_width/2;
-			var end_y = y + 1;
+	    var start_x, start_y, end_x, end_y;
+		if (side === '>') {
+			start_x = x + 1 - wall_width/2;
+			start_y = y;
+			end_x = x + 1 - wall_width/2;
+			end_y = y + 1;
 		}
-		else if (side == 'v') {
-			var start_x = x;
-			var start_y = y+1-wall_width/2;
-			var end_x = x + 1;
-			var end_y = y+1-wall_width/2;
+		else if (side === 'v') {
+			start_x = x;
+			start_y = y+1-wall_width/2;
+			end_x = x + 1;
+			end_y = y+1-wall_width/2;
 		}
-		else if (side == '<') {
-			var start_x = x+wall_width/2;
-			var start_y = y;
-			var end_x = x+wall_width/2;
-			var end_y = y + 1;
+		else if (side === '<') {
+			start_x = x+wall_width/2;
+			start_y = y;
+			end_x = x+wall_width/2;
+			end_y = y + 1;
 		}
-		else if (side == '^') {
-			var start_x = x;
-			var start_y = y+wall_width/2;
-			var end_x = x + 1;
-			var end_y = y+wall_width/2;
+		else if (side === '^') {
+			start_x = x;
+			start_y = y+wall_width/2;
+			end_x = x + 1;
+			end_y = y+wall_width/2;
 		}
 
 		start_x = start_x*painter.TILE_SIZE+painter.DISPLAY_BORDER;
