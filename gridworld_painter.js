@@ -1,341 +1,906 @@
+/*=============================================================================
+
+   Gridworld painter
+
+   TODO:
+   - use promises instead of timing?
+
+==============================================================================*/
+
 var Raphael = require('raphael');
+var _ = require('lodash');
+var product = require('cartesian-product');
+var PubSub = require('pubsub-js');
+var Q = require('q');
+var $ = require('jquery');
 
-var GridWorldPainter = function (gridworld) {
-	this.TILE_SIZE = 150;
-	this.COLORS = ['blue', 'green', 'red'];
-	this.PRIMARY_AGENT_COLOR = 'orange';
-	this.AGENT_WIDTH = this.TILE_SIZE*.3;
-	this.WALL_STROKE_SIZE = 10;
-	this.ACTION_ANIMATION_TIME = 150;
-	this.CONTRACT_SIZE = .9;
-	this.SUBACTION_PROPORTION = .2;
-	this.SUBACTION_DISTANCE = .2;
-	this.SUBACTION_COLLISION_PROPORTION = .7;
-	this.SUBACTION_COLLISION_DISTANCE = .7;
-	this.REWARD_DISPLAY_TIME = 800;
+var default_config = {
+	TILE_SIZE : 150,
+	AGENT_COLORS : ['blue', 'green', 'red'],
+	PRIMARY_AGENT_COLOR : 'orange',
+	AGENT_WIDTH : .3,
+	WALL_STROKE_SIZE : 10,
+	CONTRACT_SIZE : .9,
+	SUBACTION_PROPORTION : .2,
+	SUBACTION_DISTANCE : .2,
+	SUBACTION_COLLISION_PROPORTION : .7,
+	SUBACTION_COLLISION_DISTANCE : .7,
+	REWARD_DISPLAY_TIME : 1000,
+	DISPLAY_BORDER : 20,
 
-	this.gridworld = gridworld;
-	this.animationTimeouts = [];
-	this.objectImages = {};
-	this.currentAnimations = {};
+	sprite_color_to_offset : {
+		'white': {row : 0, col : 0},
+		'brown': {row : 0, col : 3},
+		'yellow': {row : 0, col : 6},
+		'red': {row : 0, col : 9},
+		'lightbrown': {row : 4, col : 0},
+		'grey': {row : 4, col : 3},
+		'brownspot': {row : 4, col : 6},
+		'greyspot': {row : 4, col : 9}
+	},
+
+	//timing parameters
+	OBJECT_ANIMATION_TIME : 1000,
+	SPRITE_STEPPING_FRAME_TIME : 100,
+	SPRITE_MOVING_FRAME_TIME : 50,
+	SPRITE_CIRCLING_FRAME_TIME : 250
 }
 
-GridWorldPainter.prototype.init = function (container, this_agent_name) {
-	this_agent_name = typeof this_agent_name !== 'undefined' ? this_agent_name : 'agent1';
-	this.width = this.TILE_SIZE*this.gridworld.width;
-	this.height = this.TILE_SIZE*this.gridworld.height;
-	this.paper = Raphael(container, this.width, this.height);
+var GridWorldPainter = function (width, height, container, config) {
+	config = typeof(config) == 'undefined' ? {} : config;
+	_.defaults(config, default_config);
+	for (var key in config) {
+		this[key] = config[key];
+	}
+	var painter = this;
 
-	//assign colors to agents
-	this.AGENT_COLORS = {};
-	var j = 0;
-	for (var i = 0; i < this.gridworld.agents.length; i++){
-		if(this.gridworld.agents[i]['name']==this_agent_name){
-			this.AGENT_COLORS[this.gridworld.agents[i].name] = this.PRIMARY_AGENT_COLOR;
-		}else{
-			this.AGENT_COLORS[this.gridworld.agents[i].name] = this.COLORS[j];
-			j++;
-		}
+	painter.container = container;
+	painter.width = width;
+	painter.height = height;
+	painter.width_px = width*painter.TILE_SIZE+painter.DISPLAY_BORDER*2;
+	painter.height_px = height*painter.TILE_SIZE+painter.DISPLAY_BORDER*2;
+
+	painter.y_to_h = function (y) {
+		return height - (y + 1)
 	}
 
-	this.walls = {};
-	this.goals = {};
+	painter.h_to_y = function (h) {
+		return height - h - 1
+	}
 
-	//draw tiles
-	for (var x = 0; x < this.gridworld.width; x++) {
-		for (var y = 0; y < this.gridworld.height; y++) {
-			var tile_params = {
+	painter.objects = {};
+	painter.orientation_to_rotation = {'^':0, '>':90, 'v':180, '<':270};
+}
+
+GridWorldPainter.prototype.initialize_paper = function () {
+	var painter = this;
+	painter.paper = Raphael(
+	    painter.container,
+        painter.width*painter.TILE_SIZE+2*painter.DISPLAY_BORDER,
+		painter.height*painter.TILE_SIZE+2*painter.DISPLAY_BORDER);
+}
+
+
+/*================================================================================================
+
+
+								Drawing Tiles, Text, and Walls
+
+
+================================================================================================*/
+GridWorldPainter.prototype.draw_tiles = function (tile_params) {
+	//tile_params is a mapping from states to raphael parameters
+	var painter = this;
+
+	//clear tiles before redrawing
+	if (typeof(painter.tiles) != 'undefined') {
+		_(painter.tiles).forEach(function (tile) {
+			tile.remove();
+		});
+	}
+	painter.tiles = [];
+
+	var states = product([_.range(painter.width), _.range(painter.height)]);
+	if (typeof(tile_params) == 'undefined') {
+		tile_params = _.fromPairs(_.map(states, function (s) {return [s, {}]}));
+	}
+	else {
+		_(states).forEach(function (state) {
+			if (!_.includes(_.keys(tile_params), String(state))) {
+				tile_params[state] = {}
+			}
+		});
+	}
+
+	_(tile_params).forEach($.proxy(function (params, state) {
+			var xy = _.map(state.split(','), parseFloat);
+			var x = xy[0];
+			var y = xy[1];
+			var default_tile_params = {
+				fill : 'white',
 				type : 'rect',
-				x : x*this.TILE_SIZE,
-				y : this.height - (y+1)*this.TILE_SIZE,
+				x : x*this.TILE_SIZE+this.DISPLAY_BORDER,
+				y : this.y_to_h(y)*this.TILE_SIZE+this.DISPLAY_BORDER,
 				width : this.TILE_SIZE,
 				height : this.TILE_SIZE,
 				stroke : 'black'
 			};
-			//goals
-			for (var g = 0; g < this.gridworld.goals.length; g++) {
-				var goal = this.gridworld.goals[g];
-				this.goals[goal.location] = goal; //store locations of all goals for animations
-				if (String(goal.location) === String([x,y])) {
-					tile_params.fill = this.AGENT_COLORS[goal.agent];
-				}
-			}
-			//walls
-			for (var w = 0; w < this.gridworld.walls.length; w++) {
-				var wall = this.gridworld.walls[w];
-				if (String([wall[0], wall[1]]) == String([x,y])) {
-					this.walls[wall] = 1; //store locations of all walls for animations
-					if (wall.length == 2) {
-						tile_params.fill = 'black';
-					}
-					else if (wall.length == 3) {
-						var from, to;
-						switch (wall[2]) {
-							case 'up':
-								from = [0, 1];
-								to = [1, 1];
-								break
-							case 'down':
-								from = [0,0];
-								to = [1, 0];
-								break
-							case 'left':
-								from = [0,0];
-								to = [0, 1];
-								break
-							case 'right':
-								from = [1, 0];
-								to = [1, 1];
-								break
-						}
-						from = [(x+from[0])*this.TILE_SIZE, (this.gridworld.height - (from[1] + y))*this.TILE_SIZE];
-						to = [(x+to[0])*this.TILE_SIZE, (this.gridworld.height - (to[1] + y))*this.TILE_SIZE];
-
-						var wall_path = 'M'+from.join(' ') + 'L'+to.join(' ');
-						var wall_img = this.paper.path(wall_path);
-						wall_img.attr({"stroke-width" : this.WALL_STROKE_SIZE, stroke : 'black'});
-					}
-				}
-			}
-			//var rect = new paper.Path.Rectangle(params);
-			var tile = this.paper.add([tile_params])[0];
-		}
-	}
+			params = _.cloneDeep(params);
+			_.defaults(params, default_tile_params);
+			var tile = this.paper.add([params])[0];
+			this.tiles.push(tile);
+		}, this))
 }
 
-GridWorldPainter.prototype.drawState = function (state) {
-	//paper.getPaper(this.canvas);
-	for (var object in state) {
-		if (!state.hasOwnProperty(object)) {
-			continue
-		}
-		object = state[object];
-
-		//draw agents
-		if (object.type == 'agent') {
-			var agent_params = {cx : (object.location[0] + .5)*this.TILE_SIZE, 
-				                cy : (this.gridworld.height - object.location[1] - .5)*this.TILE_SIZE};
-			if (this.objectImages.hasOwnProperty(object.name)) {
-				this.objectImages[object.name].attr(agent_params);
-			}
-			else {
-				agent_params.type = 'circle';
-				agent_params.fill = this.AGENT_COLORS[object.name];
-				agent_params.r = this.AGENT_WIDTH;
-				agent_params['stroke'] = 'white';
-				agent_params['stroke-width'] = 1;
-
-				var objectImage = this.paper.add([agent_params])[0];
-				this.objectImages[object.name] = objectImage;
-			}
-		}
+GridWorldPainter.prototype.add_text = function(x, y, text) {
+	var painter = this;
+	var params = {
+		type : 'text',
+		x : (x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+		y : (painter.y_to_h(y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+		text : text,
+		"font-size" : painter.TILE_SIZE/text.length
 	}
+	var mytext = painter.paper.add([params])[0];
+	painter.annotations = typeof(painter.annotations) == 'undefined' ? [] : painter.annotations;
+	painter.annotations.push(mytext);
 }
 
-//cases:
-//normal move
-//wait
-//hit wall
-//hit edge of world
-//hit another agent (1) who waits; (2) who is also moving to the same tile
-
-GridWorldPainter.prototype.drawTransition = function (state, action, nextState, mdp, goal_callback) {
-	console.log('------------')
-	this.drawState(state);
-	var animation_time = 0;
-
-	var intendedLocation = {};
-	for (var agent in state) {
-		if (state[agent].type !== 'agent') {
-			continue
-		}
-		if (typeof mdp == 'undefined') {
-			intendedLocation[agent] = nextState[agent];
-		}
-		else {
-			intendedLocation[agent] = mdp.getNextIntendedLocation(state[agent].location, action[agent]);
-		}
+GridWorldPainter.prototype.float_text = function(x, y, text, params) {
+	var painter = this;
+	var start_params = {
+		type : 'text',
+		x : (x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+		y : (painter.y_to_h(y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+		text : text,
+		"font-size" : painter.TILE_SIZE/text.length
 	}
+	_.merge(start_params, params);
+	var mytext = painter.paper.add([start_params])[0];
 
-	//draw movements for each agent
-	for (var agent in state) {
-		if (!state.hasOwnProperty(agent) || state[agent].type !== 'agent') {
-			continue
-		}
-		//waiting
-		if (action[agent] == 'wait') {
-			console.log(agent + ' waits');
-			this.drawWaiting(agent);
-		}
-		//try and fail
-		else if (String(intendedLocation[agent]) !== String(nextState[agent].location)) {
-			console.log(agent +' tried and failed')
-
-			//distance to try depends on failure condition
-			//1 - hit a wall or just hit another agent waiting
-			var SUBACTION_DISTANCE = this.SUBACTION_DISTANCE;
-			var SUBACTION_PROPORTION = this.SUBACTION_PROPORTION;
-			for (var otherAgent in state){
-				if (!state.hasOwnProperty(otherAgent) || state[otherAgent].type !== 'agent' || agent == otherAgent) {
-					continue
-				}
-
-				//2 - 2 agents try to get into the same spot
-				if ((String(intendedLocation[agent]) == String(nextState[otherAgent].location) ||
-					String(intendedLocation[agent]) == String(intendedLocation[otherAgent])) 
-					&& 
-					!(String(intendedLocation[agent]) == String(nextState[otherAgent].location) &&
-					String(intendedLocation[otherAgent]) == String(nextState[agent].location))) {
-					console.log(agent +' collided with ' + otherAgent)
-					SUBACTION_DISTANCE = this.SUBACTION_COLLISION_DISTANCE;
-					SUBACTION_PROPORTION = this.SUBACTION_COLLISION_PROPORTION;
-				}
-			}
-
-			this.drawTryAndFail(agent, intendedLocation, state, SUBACTION_PROPORTION, SUBACTION_DISTANCE);
-		}
-		//normal movement
-		else {
-			console.log(agent + ' makes normal movement')
-			var movement = Raphael.animation({cx : (nextState[agent].location[0] + .5)*this.TILE_SIZE,
-											  cy : (this.gridworld.height - nextState[agent].location[1] - .5)*this.TILE_SIZE}, 
-											 this.ACTION_ANIMATION_TIME, 'easeInOut');
-			this.objectImages[agent].animate(movement);
-			$.subscribe('killtimers', this.makeTimerKiller(this.objectImages[agent], movement))
-		}
-	}
-	animation_time += this.ACTION_ANIMATION_TIME;
-
-	//draw rewards (if there are any)
-	if (typeof goal_callback === 'undefined') {
-		goal_callback = function (painter, location, agent) {
-			painter.showReward(location, agent, 'Home!')
-		}
-	}
-	var reward_time = false;
-	for (var agent in state) {
-		if (typeof mdp === 'undefined') {
-			break
-		}
-		var goal_animation = (function (painter, location, agent) {
-			return function () {
-				goal_callback(painter, location, agent);
-			}
-		})(this, nextState[agent]['location'], agent)
-		if (mdp.inGoal(nextState[agent]['location'], agent)) {
-			var th = setTimeout(goal_animation, this.ACTION_ANIMATION_TIME);
-			$.subscribe('killtimers', (function (th) {
-					return function () {clearTimeout(th)}
-				})(th)
-			)
-			reward_time = true;
-		}
-	}
-
-	if (reward_time) {
-		animation_time += this.REWARD_DISPLAY_TIME;
-	}
-
-	return animation_time
+	var animate = Raphael.animation({
+			y : start_params.y-(painter.TILE_SIZE*.5),
+			opacity : 0
+		}, painter.REWARD_DISPLAY_TIME, 'easeOutIn', function () {
+			mytext.remove();
+		});
+	mytext.animate(animate);
+	return painter.REWARD_DISPLAY_TIME
 }
 
-GridWorldPainter.prototype.showReward = function (loc, agent, text) {
-	var params = {type : 'text',
-							 x : (loc[0] + .5)*this.TILE_SIZE, 
-							 y : (this.gridworld.height - loc[1] - .5)*this.TILE_SIZE, 
-							 text : text,
-							 "font-size" : 40,
-							 stroke : this.AGENT_COLORS[agent],
-							 fill : 'yellow'};
-	var r = this.paper.add([params])[0];
-	var r_animate = Raphael.animation({y : r.attr("y") - .5*this.TILE_SIZE, opacity : 0}, this.REWARD_DISPLAY_TIME)
-	
-	r.animate(r_animate);
-	$.subscribe('killtimers', this.makeTimerKiller(r, r_animate))
-}
-
-GridWorldPainter.prototype.drawWaiting = function (agent) {
-	var expand = (
-		function (painter, agentImage, original_size, time) {
-			return function () {
-				var anim = Raphael.animation({r : original_size}, time,	'backOut');
-				agentImage.animate(anim);
-				$.subscribe('killtimers', painter.makeTimerKiller(agentImage, anim))
-			}
-		})(this, this.objectImages[agent], this.objectImages[agent].attr('r'), this.ACTION_ANIMATION_TIME*.5);
-
-	var contract = Raphael.animation({r : this.objectImages[agent].attr('r')*this.CONTRACT_SIZE}, this.ACTION_ANIMATION_TIME*.5, 
-										'backIn', expand);
-	this.objectImages[agent].animate(contract);
-
-	//attach to killtimer
-	$.subscribe('killtimers', this.makeTimerKiller(this.objectImages[agent], contract))
-}
-
-GridWorldPainter.prototype.drawTryAndFail = function (agent, intendedLocation, state, SUBACTION_PROPORTION, SUBACTION_DISTANCE) {
-	var moveBack = (
-		function (painter, agentImage, original_x, original_y, time) {
-			return function () {
-				var anim = Raphael.animation({cx : original_x, cy: original_y}, time, 'backOut')
-				agentImage.animate(anim);
-				$.subscribe('killtimers', painter.makeTimerKiller(agentImage, anim))
-			}
-		})(this, this.objectImages[agent], this.objectImages[agent].attr('cx'), this.objectImages[agent].attr('cy'), 
-			this.ACTION_ANIMATION_TIME*SUBACTION_PROPORTION)
-
-	var new_x = (intendedLocation[agent][0]*SUBACTION_DISTANCE) + 
-				(state[agent].location[0]*(1 - SUBACTION_DISTANCE));
-
-	var new_y = ((this.gridworld.height - intendedLocation[agent][1])*SUBACTION_DISTANCE)
-				+ (this.gridworld.height - state[agent].location[1])*(1 - SUBACTION_DISTANCE);
-
-	new_x = (new_x + .5)*this.TILE_SIZE;
-	new_y = (new_y - .5)*this.TILE_SIZE;
-
-	var moveToward = Raphael.animation({cx : new_x, cy : new_y},
-										this.ACTION_ANIMATION_TIME*(1-SUBACTION_PROPORTION), 'backIn',
-										moveBack);
-
-	this.objectImages[agent].animate(moveToward);
-	$.subscribe('killtimers', this.makeTimerKiller(this.objectImages[agent], moveToward));
-}
-
-GridWorldPainter.prototype.makeTimerKiller = function (element, animation) {
+GridWorldPainter.prototype.float_image = function(x, y, src, width, height, display_time, params) {
+	display_time = typeof(display_time) == 'undefined' ? this.REWARD_DISPLAY_TIME : display_time;
+	var start_params = {
+		type : 'image',
+		x : (x + .5)*this.TILE_SIZE+this.DISPLAY_BORDER-width/2,
+		y : (this.y_to_h(y) + .5)*this.TILE_SIZE+this.DISPLAY_BORDER-height/2,
+		src : src,
+		width : width,
+		height : height
+	}
+	_.merge(start_params, params);
+	var my_img = this.paper.add([start_params])[0];
+	var animate = Raphael.animation({
+		y : start_params.y-(this.TILE_SIZE*.5),
+		opacity : 0
+	}, display_time, 'easeOutIn', (function (my_img) {
 		return function () {
-			element.stop(animation);
-		}
-	} 
-
-GridWorldPainter.prototype.remove = function () {
-	this.paper.remove();
+					my_img.remove();
+				}
+	})(my_img));
+	my_img.animate(animate);
+	return display_time
 }
 
-GridWorldPainter.prototype.draw_score = function () {
-	var scoreboard_params = {
-		type : 'rect',
-		x : 0,
-		y : 0,
-		width : this.width,
-		height : this.height,
-		stroke : 'black',
-		fill : 'black'
-	};
-	this.scoreboard_background = this.paper.add([scoreboard_params])[0];
+GridWorldPainter.prototype.draw_wall = function(x,y,side, params) {
+	params = typeof(params) == 'undefined' ? {} : params;
+	var painter = this;
+	var wall_width = .025;
+	y = painter.y_to_h(y);
 
-	var text_params = {
-		type: 'text', 
-		x : this.width/2,
-		y : this.height/2,
-		text : 'End of round',
-		'font-size' : this.width/8,
-		fill : 'white'
+	if (typeof(painter.walls) == 'undefined') {
+		painter.walls = [];
 	}
-	this.scoreboard_text = this.paper.add([text_params])[0];
+
+	if (typeof(side) == 'undefined') {
+		var default_wall_params = {
+			fill : 'black',
+			type : 'rect',
+			x : (x-wall_width/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+			y : (y-wall_width/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+			width : painter.TILE_SIZE*(1+wall_width),
+			height : painter.TILE_SIZE*(1+wall_width),
+			stroke : 'black'
+		};
+		_.defaults(params, default_wall_params);
+		var wall = painter.paper.add([params])[0];
+		painter.tiles.push(wall);
+	} else {
+		if (side == '>') {
+			var start_x = x + 1 - wall_width/2;
+			var start_y = y;
+			var end_x = x + 1 - wall_width/2;
+			var end_y = y + 1;
+		}
+		else if (side == 'v') {
+			var start_x = x;
+			var start_y = y+1-wall_width/2;
+			var end_x = x + 1;
+			var end_y = y+1-wall_width/2;
+		}
+		else if (side == '<') {
+			var start_x = x+wall_width/2;
+			var start_y = y;
+			var end_x = x+wall_width/2;
+			var end_y = y + 1;
+		}
+		else if (side == '^') {
+			var start_x = x;
+			var start_y = y+wall_width/2;
+			var end_x = x + 1;
+			var end_y = y+wall_width/2;
+		}
+
+		start_x = start_x*painter.TILE_SIZE+painter.DISPLAY_BORDER;
+		start_y = start_y*painter.TILE_SIZE+painter.DISPLAY_BORDER;
+		end_x = end_x*painter.TILE_SIZE+painter.DISPLAY_BORDER;
+		end_y = end_y*painter.TILE_SIZE+painter.DISPLAY_BORDER;
+		var wall = painter.paper.path(["M",start_x,start_y,'L',end_x, end_y]);
+
+		params = _.cloneDeep(params);
+		_.defaults(params, {stroke: 'black', 'stroke-width':wall_width*painter.TILE_SIZE});
+		wall.attr(params);
+		painter.walls.push(wall);
+	}
+
 }
 
-GridWorldPainter.prototype.hide_score = function () {
-	this.scoreboard_background.animate({opacity : 0}, 250);
-	this.scoreboard_text.animate({opacity :0}, 250)
+GridWorldPainter.prototype.draw_walls = function(walls) {
+	for (var w = 0; w < walls.length; w++) {
+		var wall = walls[w];
+		this.draw_wall(wall.x, wall.y, wall.side, wall.params)
+	}
+}
+
+/*================================================================================================
+
+
+							Initializing, Drawing, and Clearing Objects
+
+
+================================================================================================*/
+GridWorldPainter.prototype.add_object = function(object_type, object_id, object_params) {
+	//support for circle, rect, and sprite - default values are set here
+	var painter = this;
+	if (object_type == 'circle') {
+		_.defaults(object_params, {
+			agent_size : .3
+		})
+	}
+	else if (object_type == 'rect') {
+		_.defaults(object_params, {
+			object_length : .8,
+			object_width : .5
+		});
+	}
+	else if (object_type == 'sprite') {
+		var spritecolor = typeof(object_params['spritecolor']) == 'undefined' ? 'white' : object_params['spritecolor'];
+		var orientation_step_to_row_col = (function (offset) {
+			return function (orientation, step) {
+				var o_to_r = {'v' : 0, '^' : 3, '<' : 1, '>' : 2};
+				var row = o_to_r[orientation];
+				var col = step%3
+				return [row+offset.row, col+offset.col]
+			}
+		})(this.sprite_color_to_offset[spritecolor]);
+
+		_.defaults(object_params, {
+			sheet_rows : 8,
+			sheet_cols : 12,
+			src : './img/dogSpriteSheet.png',
+			orientation_step_to_row_col : orientation_step_to_row_col,
+			x_adj : 0,
+			y_adj: -5
+		})
+	}
+	painter.objects[object_id] = {
+		object_type : object_type,
+		object_id : object_id,
+		object_params : object_params
+	}
+}
+
+GridWorldPainter.prototype.draw_object = function(x, y, orientation, object_id) {
+	var painter = this;
+
+	/*========================================================================
+								Drawing a circle
+	========================================================================*/
+	if (painter.objects[object_id].object_type == 'circle') {
+		if (typeof(painter.objects[object_id].drawn_object) == 'undefined') {
+			//default circle params
+			var object_params = painter.objects[object_id].object_params;
+			var params = {
+				type : 'circle',
+				cx : (x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				cy : (painter.y_to_h(y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				fill : 'blue',
+				r : this.TILE_SIZE*object_params.agent_size,
+				stroke : 'white',
+				'stroke-width' : 1
+			};
+			_.assign(params, object_params)
+			var drawn_object = painter.paper.add([params])[0];
+			painter.objects[object_id].drawn_object = drawn_object;
+		}
+		else {
+			painter.objects[object_id].drawn_object.attr({
+				cx : (x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				cy : (painter.y_to_h(y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER
+			});
+		}
+	}
+	/*========================================================================
+								Drawing a rectangle
+	========================================================================*/
+	if (painter.objects[object_id].object_type == 'rect') {
+		var object_params = painter.objects[object_id].object_params;
+		if (_.includes(['^','v'], orientation)) {
+			var rect_width = object_params.object_width;
+			var rect_length = object_params.object_length;
+		}
+		else if (_.includes(['<', '>'], orientation)) {
+			var rect_width = object_params.object_length;
+			var rect_length = object_params.object_width;
+		}
+
+		//whether a drawn object exists or not
+		if (typeof(painter.objects[object_id].drawn_object) == 'undefined') {
+			//default rectangle params
+			var params = {
+				type : 'rect',
+				x : (x+.5-rect_width/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				y : (painter.y_to_h(y)+.5-rect_length/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				width : rect_width*painter.TILE_SIZE,
+				height : rect_length*painter.TILE_SIZE,
+				fill : 'blue',
+				stroke : 'white',
+				'stroke-width' : 1
+			}
+			_.assign(params, object_params)
+			var drawn_object = painter.paper.add([params])[0];
+			painter.objects[object_id].drawn_object = drawn_object;
+		}
+		else {
+			painter.objects[object_id].drawn_object.attr({
+				x : (x+.5-rect_width/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				y : (painter.y_to_h(y)+.5-rect_length/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+				width : rect_width*painter.TILE_SIZE,
+				height : rect_length*painter.TILE_SIZE
+			});
+		}
+	}
+
+	/*========================================================================
+								Drawing a sprite
+	========================================================================*/
+	if (painter.objects[object_id].object_type == 'sprite') {
+		var sprite_params = painter.objects[object_id].object_params;
+		var s_rowcol = sprite_params.orientation_step_to_row_col(orientation, 1);
+		var s_row = s_rowcol[0];
+		var s_col = s_rowcol[1];
+
+		var params = {
+			x : (x-s_col)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.x_adj,
+			y : (painter.y_to_h(y)-s_row)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.y_adj,
+
+			'clip-rect':_.join([
+					x*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.x_adj,
+					painter.y_to_h(y)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.y_adj+2,
+					painter.TILE_SIZE,
+					painter.TILE_SIZE
+				], ',')
+		}
+		if (typeof(painter.objects[object_id].drawn_object) == 'undefined') {
+			_.defaults(params, {
+				width : painter.TILE_SIZE*sprite_params.sheet_cols,
+				height : painter.TILE_SIZE*sprite_params.sheet_rows,
+				src : sprite_params.src,
+				type: 'image'
+			});
+			_.assign(params, sprite_params);
+			var drawn_object = painter.paper.add([params])[0];
+			painter.objects[object_id].drawn_object = drawn_object;
+		}
+		else {
+			painter.objects[object_id].drawn_object.attr(params);
+		}
+		painter.objects[object_id].object_params.sprite_step = 1;
+	}
+
+	//update parameters of object
+	painter.objects[object_id].object_params.grid_x = x;
+	painter.objects[object_id].object_params.grid_y = y;
+	painter.objects[object_id].object_params.orientation = orientation;
+}
+
+GridWorldPainter.prototype.hide_object = function(object_id) {
+	this.objects[object_id].drawn_object.hide();
+}
+
+GridWorldPainter.prototype.show_object = function(object_id) {
+	this.objects[object_id].drawn_object.show();
+}
+
+GridWorldPainter.prototype.clear_objects = function() {
+	_.forEach(this.objects, function (object, object_id) {
+		object.drawn_object.remove();
+	})
+	this.objects = {};
+}
+
+GridWorldPainter.prototype.clear_object = function(object_id) {
+	this.objects[object_id].drawn_object.remove();
+	this.objects[object_id] = undefined;
+}
+
+/*================================================================================================
+
+
+										Animating Objects
+
+
+================================================================================================*/
+
+GridWorldPainter.prototype._update_sprite = function(object_id, params) {
+	//params available: orientation, sprite_step, grid_x, grid_y
+	var painter = this;
+	var sprite_params = painter.objects[object_id].object_params;
+
+	var orientation = typeof(params.orientation) == 'undefined' ? sprite_params.orientation : params.orientation;
+	var sprite_step = typeof(params.sprite_step) == 'undefined' ? sprite_params.sprite_step : params.sprite_step;
+	var grid_x = typeof(params.grid_x) == 'undefined' ? sprite_params.grid_x : params.grid_x;
+	var grid_y = typeof(params.grid_y) == 'undefined' ? sprite_params.grid_y : params.grid_y;
+
+	var s_rowcol = sprite_params.orientation_step_to_row_col(orientation, sprite_step);
+	var s_row = s_rowcol[0];
+	var s_col = s_rowcol[1];
+
+	var drawn_sprite = painter.objects[object_id].drawn_object;
+	drawn_sprite.attr({
+			x : (grid_x-s_col)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.x_adj,
+			y : (painter.y_to_h(grid_y)-s_row)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.y_adj,
+
+			'clip-rect':_.join([
+					grid_x*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.x_adj,
+					painter.y_to_h(grid_y)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.y_adj+2,
+					painter.TILE_SIZE,
+					painter.TILE_SIZE
+				], ',')
+		}
+	);
+	_.assign(sprite_params, params, {sheet_cols : s_col, sheet_rows : s_row});
+}
+
+
+GridWorldPainter.prototype.animate_object_movement = function (action, new_x, new_y, object_id, anim_type) {
+	var painter = this;
+	var OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+
+	/*========================================================================
+								Animate a circle
+	========================================================================*/
+	if (painter.objects[object_id].object_type == 'circle') {
+		var object_params = painter.objects[object_id].object_params;
+		var drawn_object = painter.objects[object_id].drawn_object;
+
+		if (action == 'x') {
+			var expand_animate = Raphael.animation({r : painter.TILE_SIZE*object_params.agent_size},
+													OBJECT_ANIMATION_TIME*.5, 'backOut');
+			var expand = (function (drawn_object, expand_animate) {
+				return function () {
+					drawn_object.animate(expand_animate)
+				}
+			})(drawn_object, expand_animate)
+			var contract = Raphael.animation({
+												r : painter.TILE_SIZE*object_params.agent_size*painter.CONTRACT_SIZE,
+												cx : (new_x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+												cy : (painter.y_to_h(new_y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER
+											},
+											 OBJECT_ANIMATION_TIME*.5,
+											 'backIn', expand);
+			drawn_object.animate(contract);
+		}
+		else {
+			var move = Raphael.animation({
+					cx : (new_x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+					cy : (painter.y_to_h(new_y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER
+				},OBJECT_ANIMATION_TIME, 'easeInOut');
+			drawn_object.animate(move);
+			object_params.grid_x = new_x;
+			object_params.grid_y = new_y;
+		}
+	}
+
+	/*========================================================================
+							Animate a rectangle
+	========================================================================*/
+	if (painter.objects[object_id].object_type == 'rect') {
+		var object_params = painter.objects[object_id].object_params;
+		var drawn_object = painter.objects[object_id].drawn_object;
+
+		if (_.includes(['^','v','<','>'], action)) {
+			object_params.orientation = action;
+		}
+		if (_.includes(['^','v'], object_params.orientation)) {
+			var rect_width = object_params.object_width;
+			var rect_length = object_params.object_length;
+		}
+		else if (_.includes(['<', '>'], object_params.orientation)) {
+			var rect_width = object_params.object_length;
+			var rect_length = object_params.object_width;
+		}
+
+		if (action == 'x') {
+			var expand_animate = Raphael.animation({
+													width : rect_width*painter.TILE_SIZE,
+													height : rect_length*painter.TILE_SIZE,
+													x : drawn_object.attr('x'),
+													y : drawn_object.attr('y')
+													},
+													OBJECT_ANIMATION_TIME*.5, 'backOut');
+			var expand = (function (drawn_object, expand_animate) {
+				return function () {
+					drawn_object.animate(expand_animate)
+				}
+			})(drawn_object, expand_animate)
+			var contract = Raphael.animation({
+												width : rect_width*painter.TILE_SIZE*painter.CONTRACT_SIZE,
+												height : rect_length*painter.TILE_SIZE*painter.CONTRACT_SIZE,
+												x : (new_x+.5-(rect_width*painter.CONTRACT_SIZE)/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+												y : (painter.y_to_h(new_y)+.5-(rect_length*painter.CONTRACT_SIZE)/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER
+											},
+											 OBJECT_ANIMATION_TIME*.5,
+											 'backIn', expand);
+			drawn_object.animate(contract);
+		}
+		else {
+			painter.draw_object(object_params.grid_x, object_params.grid_y, action, object_id);
+			var move = Raphael.animation({
+					x : (new_x+.5-rect_width/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+					y : (painter.y_to_h(new_y)+.5-rect_length/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+					width : rect_width*painter.TILE_SIZE,
+					height : rect_length*painter.TILE_SIZE
+				},OBJECT_ANIMATION_TIME, 'easeInOut');
+			drawn_object.animate(move);
+			object_params.grid_x = new_x;
+			object_params.grid_y = new_y;
+		}
+	}
+	/*========================================================================
+								Animate a sprite
+	========================================================================*/
+	if (painter.objects[object_id].object_type == 'sprite') {
+		var SPRITE_STEPPING_FRAME_TIME = painter.SPRITE_STEPPING_FRAME_TIME;
+		var SPRITE_CIRCLING_FRAME_TIME = painter.SPRITE_CIRCLING_FRAME_TIME;
+		var SPRITE_MOVING_FRAME_TIME = painter.SPRITE_MOVING_FRAME_TIME;
+
+		var sprite_params = painter.objects[object_id].object_params;
+
+		var frames = OBJECT_ANIMATION_TIME/SPRITE_MOVING_FRAME_TIME;
+		var dx = (new_x - sprite_params.grid_x)/frames;
+		var dy = (new_y - sprite_params.grid_y)/frames;
+
+		painter.objects[object_id].timers = {};
+		var timers = painter.objects[object_id].timers;
+
+		if (_.includes(['>','v','<','^'], action)) {
+			painter._update_sprite(object_id, {orientation : action});
+
+			var sprite_moving = (function (painter, object_id, sprite_params, dx, dy) {
+				return function () {
+					painter._update_sprite(object_id, {
+						grid_x : sprite_params.grid_x+dx,
+						grid_y : sprite_params.grid_y+dy
+					})
+				}
+			})(painter, object_id, sprite_params, dx, dy)
+			var moving = setInterval(sprite_moving, SPRITE_MOVING_FRAME_TIME);
+			timers['moving'] = moving;
+
+
+
+			var sprite_stepping = (function (painter, object_id, sprite_params) {
+				return function () {
+					if (sprite_params.sprite_step == 0) {var step = 2}
+					else {var step = 0}
+					painter._update_sprite(object_id, {sprite_step:step});
+				}
+			})(painter, object_id, sprite_params)
+			var stepping = setInterval(sprite_stepping, SPRITE_STEPPING_FRAME_TIME);
+			timers['stepping'] = stepping;
+
+
+			var kill_animation = (function (painter, object_id, stepping, moving, new_x, new_y) {
+				return function () {
+					painter._update_sprite(object_id, {grid_x:new_x, grid_y:new_y})
+					painter._update_sprite(object_id, {sprite_step:1});
+					clearInterval(stepping);
+					clearInterval(moving);
+				}
+			})(painter, object_id, stepping, moving, new_x, new_y);
+
+			timers['kill_animation'] = setTimeout(kill_animation, OBJECT_ANIMATION_TIME);
+		}
+		else if (action == 'x') {
+			var original_orientation = sprite_params.orientation;
+			var sprite_circling = (function (painter, object_id, sprite_params) {
+				var next_orientation = {'>':'v', 'v':'<', '<':'^', '^':'>'};
+				return function () {
+					painter._update_sprite(object_id, {orientation:next_orientation[sprite_params.orientation]})
+				}
+			})(painter, object_id, sprite_params)
+			var circling = setInterval(sprite_circling, SPRITE_CIRCLING_FRAME_TIME);
+			timers['circling'] = circling;
+
+			var kill_animation = (function (painter, object_id, circling, original_orientation) {
+				return function () {
+					painter._update_sprite(object_id, {orientation : original_orientation});
+					clearInterval(circling)
+				}
+			})(painter, object_id, circling, original_orientation);
+
+			timers['kill_animation'] = setTimeout(kill_animation, OBJECT_ANIMATION_TIME)
+		}
+
+
+	}
+
+	return painter.OBJECT_ANIMATION_TIME;
+}
+
+GridWorldPainter.prototype.kill_object_movement = function (object_id) {
+	if ((this.objects[object_id].object_type == 'circle') ||
+		(this.objects[object_id].object_type == 'rect')) {
+		this.objects[object_id].drawn_object.stop()
+	}
+	else if (this.objects[object_id].object_type == 'sprite') {
+		var timers = this.objects[object_id].timers;
+
+		//kill animation
+		if (_.has(timers, 'stepping')) {
+			clearInterval(timers.stepping);
+		}
+		if (_.has(timers, 'moving')) {
+			clearInterval(timers.moving);
+		}
+		if (_.has(timers, 'circling')) {
+			clearInterval(timers.circling);
+		}
+		if (_.has(timers, 'kill_animation')) {
+			clearTimeout(timers.kill_animation);
+		}
+
+
+	}
+};
+
+// GridWorldPainter.prototype.bring_object_into_contact = function
+//     (obj1_id, obj2_id, obj1_dist, obj2_dist) {
+//
+//
+//     var move = Raphael.animation({
+// 					cx : (new_x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
+// 					cy : (painter.y_to_h(new_y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER
+// 				},OBJECT_ANIMATION_TIME, 'easeInOut');
+// 			drawn_object.animate(move);
+// 			object_params.grid_x = new_x;
+// 			object_params.grid_y = new_y;
+// };
+
+/*================================================================================================
+
+
+									Interacting w Objects
+
+
+================================================================================================*/
+
+GridWorldPainter.prototype.enable_drag_drop = function (object_id, orientation) {
+	var painter = this;
+
+	var drag_defer = Q.defer();
+	var drop_defer = Q.defer();
+
+	painter.objects[object_id].drawn_object.drag(
+		//onmove handler
+		$.proxy((function(object_id, orientation) {
+				var y_drag_offset;
+				switch (orientation) {
+					case '^':
+						y_drag_offset = 0.02;
+						break;
+					case 'v':
+						y_drag_offset = 0.02;
+						break;
+					case '<':
+						y_drag_offset = 0.1;
+						break;
+					case '>':
+						y_drag_offset = 0.1;
+						break;
+				}
+				return function (dx, dy, px, py, event) {
+					//make px, py relative to canvas coordinates
+					var offset = $(this.paper.canvas).offset()
+					px = px - offset.left;
+					py = py - offset.top;
+
+					px = Math.min(Math.max(px, this.TILE_SIZE/2), this.width_px - this.TILE_SIZE/2);
+					py = Math.min(Math.max(py, this.TILE_SIZE/2), this.height_px - this.TILE_SIZE/2);
+
+					/*========================================================================
+												Dragging a circle
+					========================================================================*/
+					if (this.objects[object_id].object_type == 'circle') {
+						this.objects[object_id].drawn_object.attr({
+							cx : px,
+							cy : py
+						});
+					}
+
+					//pixels to grid conversion
+					//x = (w - this.DISPLAY_BORDER)/this.TILE_SIZE - .5;
+					//y = this.h_to_y((h-d)/t - .5);
+					/*========================================================================
+												Dragging a rectangle
+					========================================================================*/
+					if (this.objects[object_id].object_type == 'rect') {
+						var object_params = this.objects[object_id].object_params;
+						if (_.includes(['^','v'], orientation)) {
+							var rect_width = object_params.object_width;
+							var rect_length = object_params.object_length;
+						}
+						else if (_.includes(['<', '>'], orientation)) {
+							var rect_width = object_params.object_length;
+							var rect_length = object_params.object_width;
+						}
+
+						this.objects[object_id].drawn_object.attr({
+							x : px-rect_width/2,
+							y : py-rect_length/2,
+							width : rect_width*painter.TILE_SIZE,
+							height : rect_length*painter.TILE_SIZE
+						});
+
+						//pixels to grid conversion
+						// x = (w-this.DISPLAY_BORDER)/this.TILE_SIZE - .5 + rect_width/2;
+						// y = this.h_to_y((h - this.DISPLAY_BORDER)/this.TILE_SIZE -.5+rect_length/2);
+					}
+
+					//sprite
+					/*========================================================================
+												Dragging a sprite
+					========================================================================*/
+					if (painter.objects[object_id].object_type == 'sprite') {
+						var sprite_params = painter.objects[object_id].object_params;
+						var s_rowcol = sprite_params.orientation_step_to_row_col(orientation, 1);
+						var s_row = s_rowcol[0];
+						var s_col = s_rowcol[1];
+
+						var params = {
+							x : px - this.TILE_SIZE*(s_col+.5),
+							y : py - this.TILE_SIZE*(s_row+.5+y_drag_offset),
+
+							'clip-rect':_.join([
+									px-this.TILE_SIZE/2,
+									py-this.TILE_SIZE/2,
+									painter.TILE_SIZE,
+									painter.TILE_SIZE
+								], ',')
+						}
+
+						painter.objects[object_id].drawn_object.attr(params);
+						painter.objects[object_id].object_params.sprite_step = 1;
+
+						//x : (x-s_col)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.x_adj,
+						//y : (painter.y_to_h(y)-s_row)*painter.TILE_SIZE+painter.DISPLAY_BORDER+sprite_params.y_adj,
+					}
+				}
+			})(object_id, orientation), this),
+
+		//onstart handler
+		$.proxy((function(object_id, orientation) {
+				return function (x, y, event) {
+					drag_defer.resolve();
+
+					//orient sprite in a particular way
+					if (this.objects[object_id].object_type == 'sprite') {
+						this._update_sprite(object_id, {orientation : orientation})
+					}
+				}
+
+			})(object_id, orientation), this),
+
+		//onend handler
+		$.proxy((function(object_id, orientation) {
+				return function (event) {
+					var offset = $(this.paper.canvas).offset()
+					var px = (event.pageX - offset.left);
+					var py = (event.pageY - offset.top);
+
+					px = Math.min(Math.max(px, this.TILE_SIZE/2), this.width_px - this.TILE_SIZE/2);
+					py = Math.min(Math.max(py, this.TILE_SIZE/2), this.height_px - this.TILE_SIZE/2);
+					px -= this.DISPLAY_BORDER;
+					py -= this.DISPLAY_BORDER;
+
+					//find closest grid
+					var x = Math.round(px/this.TILE_SIZE-.5);
+					var y = Math.round(this.h_to_y(py/this.TILE_SIZE-.5));
+
+					this._update_sprite(object_id, {grid_x : x, grid_y : y});
+
+					drop_defer.resolve({
+						px : px,
+						py : py,
+						x : x,
+						y : y
+					});
+				}
+			})(object_id, orientation), this)
+	)
+
+	return [drag_defer.promise, drop_defer.promise]
+}
+
+GridWorldPainter.prototype.disable_drag_drop = function (object_id) {
+	if (typeof(object_id) == 'undefined') {
+		console.warn("No object_id defined");
+	}
+	this.objects[object_id].drawn_object.undrag();
+}
+
+
+/*================================================================================================
+
+
+										Accessing Objects
+
+
+================================================================================================*/
+
+GridWorldPainter.prototype.get_object_location = function (object_id) {
+	var params = this.objects[object_id].object_params;
+	return {x : params.grid_x, y : params.grid_y}
+}
+
+/*================================================================================================
+
+
+							Old functions for backwards compatibility
+
+
+================================================================================================*/
+
+GridWorldPainter.prototype.draw_agent = function(x, y, agent_id) {
+	this.add_object('circle', agent_id, {})
+	this.draw_object(x,y,'^',agent_id);
+}
+
+GridWorldPainter.prototype.hide_agent = function(agent_id) {
+	this.hide_object(agent_id);
+}
+
+GridWorldPainter.prototype.show_agent = function(agent_id) {
+	this.show_agent(agent_id);
+}
+
+GridWorldPainter.prototype.clear_agents = function() {
+	this.clear_objects();
+}
+
+GridWorldPainter.prototype.animate_agent_movement = function(action, new_x, new_y, agent_id, type) {
+	return this.animate_object_movement(action, new_x, new_y, agent_id, type);
 }
 
 module.exports = GridWorldPainter;
