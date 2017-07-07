@@ -687,18 +687,97 @@ GridWorldPainter.prototype.kill_object_movement = function (object_id) {
 	}
 };
 
-// GridWorldPainter.prototype.bring_object_into_contact = function
-//     (obj1_id, obj2_id, obj1_dist, obj2_dist) {
-//
-//
-//     var move = Raphael.animation({
-// 					cx : (new_x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
-// 					cy : (painter.y_to_h(new_y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER
-// 				},OBJECT_ANIMATION_TIME, 'easeInOut');
-// 			drawn_object.animate(move);
-// 			object_params.grid_x = new_x;
-// 			object_params.grid_y = new_y;
-// };
+GridWorldPainter.prototype.bring_objects_into_contact = function
+    (obj1_id, obj2_id, obj1_weight, overlap) {
+    var movement_mode = 'easeInOut';
+    var OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+    var get_center = function (obj) {
+        if (obj.object_type === 'circle') {
+            return [obj.drawn_object.attr('cx'), obj.drawn_object.attr('cy')]
+        }
+        else if (obj.object_type === 'rect') {
+            var cx = obj.drawn_object.attr('x') + obj.drawn_object.attr('width')/2;
+            var cy = obj.drawn_object.attr('y') + obj.drawn_object.attr('height')/2;
+            return [cx, cy]
+        }
+    };
+
+    var calc_magnitude = function (v) {
+        return Math.sqrt(v[0]*v[0]+v[1]*v[1]);
+    };
+    var get_unit_v = function(v) {
+        var mag = calc_magnitude(v);
+        return _.map(v, function(i) {return i/mag})
+    };
+
+    var get_interior_direction = function (obj, unit_v) {
+        if (obj.object_type === 'circle') {
+            var r = obj.drawn_object.attr('r');
+            return _.map(unit_v, function(i) {return i*r})
+        }
+        else if (obj.object_type === 'rect') {
+            var w = obj.drawn_object.attr('width')*(unit_v[0]/Math.abs(unit_v[0]));
+            var h = obj.drawn_object.attr('height')*(unit_v[1]/Math.abs(unit_v[1]));
+            var x_indir = [w/2, (w/2)*(unit_v[1]/unit_v[0])];
+            var y_indir = [(unit_v[0]/unit_v[1])*(h/2), h/2];
+            return _.minBy([x_indir, y_indir], calc_magnitude)
+        }
+    };
+
+    var obj1 = this.objects[obj1_id];
+    var obj2 = this.objects[obj2_id];
+
+    var obj1_c = get_center(obj1);
+    var obj2_c = get_center(obj2);
+
+    var obj1_to_obj2 = [obj2_c[0]-obj1_c[0], obj2_c[1]-obj1_c[1]];
+    var obj2_to_obj1 = [obj1_c[0]-obj2_c[0], obj1_c[1]-obj2_c[1]];
+
+    var obj1_in_dir = get_interior_direction(obj1, get_unit_v(obj1_to_obj2));
+    var obj2_in_dir = get_interior_direction(obj2, get_unit_v(obj2_to_obj1));
+
+    var dobj1 = _.map(_.zip(obj1_to_obj2, obj1_in_dir, obj2_in_dir), function (i) {
+        var obj1_to_obj2 = i[0];
+        var obj1_in_dir = i[1];
+        var obj2_in_dir = i[2];
+        return obj1_weight*(obj1_to_obj2 - (obj1_in_dir-obj2_in_dir)*(1-overlap))
+    });
+    var dobj2 = _.map(_.zip(obj2_to_obj1, obj2_in_dir, obj1_in_dir), function (i) {
+        var obj2_to_obj1 = i[0];
+        var obj2_in_dir = i[1];
+        var obj1_in_dir = i[2];
+        return (1-obj1_weight)*(obj2_to_obj1 - (obj2_in_dir-obj1_in_dir)*(1-overlap))
+    });
+
+    var move_obj1, move_obj2;
+    if (obj1.object_type === 'circle') {
+        move_obj1 = Raphael.animation({
+            cx : obj1.drawn_object.attr('cx') + dobj1[0],
+            cy : obj1.drawn_object.attr('cy') + dobj1[1]
+        }, OBJECT_ANIMATION_TIME, movement_mode);
+    }
+    else if (obj1.object_type === 'rect') {
+        move_obj1 = Raphael.animation({
+            x : obj1.drawn_object.attr('x') + dobj1[0],
+            y : obj1.drawn_object.attr('y') + dobj1[1]
+        }, OBJECT_ANIMATION_TIME, movement_mode);
+    }
+    obj1.drawn_object.animate(move_obj1);
+
+    if (obj2.object_type === 'circle') {
+        move_obj2 = Raphael.animation({
+            cx : obj2.drawn_object.attr('cx') + dobj2[0],
+            cy : obj2.drawn_object.attr('cy') + dobj2[1]
+        }, OBJECT_ANIMATION_TIME, movement_mode);
+    }
+    else if (obj2.object_type === 'rect') {
+        move_obj2 = Raphael.animation({
+            x : obj2.drawn_object.attr('x') + dobj2[0],
+            y : obj2.drawn_object.attr('y') + dobj2[1]
+        }, OBJECT_ANIMATION_TIME, movement_mode);
+    }
+    obj2.drawn_object.animate(move_obj2);
+};
 
 /*================================================================================================
 
