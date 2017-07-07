@@ -662,11 +662,11 @@ GridWorldPainter.prototype.animate_object_movement = function (action, new_x, ne
 }
 
 GridWorldPainter.prototype.kill_object_movement = function (object_id) {
-	if ((this.objects[object_id].object_type == 'circle') ||
-		(this.objects[object_id].object_type == 'rect')) {
+	if ((this.objects[object_id].object_type === 'circle') ||
+		(this.objects[object_id].object_type === 'rect')) {
 		this.objects[object_id].drawn_object.stop()
 	}
-	else if (this.objects[object_id].object_type == 'sprite') {
+	else if (this.objects[object_id].object_type === 'sprite') {
 		var timers = this.objects[object_id].timers;
 
 		//kill animation
@@ -688,9 +688,21 @@ GridWorldPainter.prototype.kill_object_movement = function (object_id) {
 };
 
 GridWorldPainter.prototype.bring_objects_into_contact = function
-    (obj1_id, obj2_id, obj1_weight, overlap) {
-    var movement_mode = 'easeInOut';
-    var OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+    (obj1_id, obj2_id, obj1_weight, overlap, config) {
+    var movement_mode;
+    if (typeof(config.movement_mode) === "undefined") {
+        movement_mode = "easeInOut";
+    }
+    else {
+        movement_mode = config.movement_mode;
+    }
+    var OBJECT_ANIMATION_TIME;
+    if (typeof(config.OBJECT_ANIMATION_TIME) === "undefined") {
+        OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+    }
+    else {
+        OBJECT_ANIMATION_TIME = config.OBJECT_ANIMATION_TIME;
+    }
     var get_center = function (obj) {
         if (obj.object_type === 'circle') {
             return [obj.drawn_object.attr('cx'), obj.drawn_object.attr('cy')]
@@ -777,6 +789,8 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
         }, OBJECT_ANIMATION_TIME, movement_mode);
     }
     obj2.drawn_object.animate(move_obj2);
+
+    return OBJECT_ANIMATION_TIME
 };
 
 /*================================================================================================
