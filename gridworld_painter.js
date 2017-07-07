@@ -699,7 +699,7 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
     }
     var OBJECT_ANIMATION_TIME;
     if (typeof(config.OBJECT_ANIMATION_TIME) === "undefined") {
-        OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+        OBJECT_ANIMATION_TIME = this.OBJECT_ANIMATION_TIME;
     }
     else {
         OBJECT_ANIMATION_TIME = config.OBJECT_ANIMATION_TIME;
