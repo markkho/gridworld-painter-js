@@ -689,6 +689,7 @@ GridWorldPainter.prototype.kill_object_movement = function (object_id) {
 
 GridWorldPainter.prototype.bring_objects_into_contact = function
     (obj1_id, obj2_id, obj1_weight, overlap, config) {
+    config = typeof(config) === 'undefined' ? {} : config;
     var movement_mode;
     if (typeof(config.movement_mode) === "undefined") {
         movement_mode = "easeInOut";
@@ -792,6 +793,42 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
 
     return OBJECT_ANIMATION_TIME
 };
+
+GridWorldPainter.prototype.collide_and_return_objs = function
+    (obj1_id, obj2_id, obj1_weight, overlap, config) {
+    config = typeof(config) === 'undefined' ? {} : config;
+    if (typeof(config.movement_mode) === "undefined") {
+        movement_mode = "easeInOut";
+    }
+    else {
+        movement_mode = config.movement_mode;
+    }
+    var OBJECT_ANIMATION_TIME;
+    if (typeof(config.OBJECT_ANIMATION_TIME) === "undefined") {
+        OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+    }
+    else {
+        OBJECT_ANIMATION_TIME = config.OBJECT_ANIMATION_TIME;
+    }
+
+    var obj1_orig = this.objects[obj1_id].drawn_object.attr(['x','y','cx','cy']);
+    var obj2_orig = this.objects[obj2_id].drawn_object.attr(['x','y','cx','cy']);
+
+    var obj1_reset = Raphael.animation(obj1_orig, OBJECT_ANIMATION_TIME/2, movement_mode);
+    var obj2_reset = Raphael.animation(obj2_orig, OBJECT_ANIMATION_TIME/2, movement_mode);
+
+    this.bring_objects_into_contact(obj1_id, obj2_id, obj1_weight, 0, {
+        OBJECT_ANIMATION_TIME : OBJECT_ANIMATION_TIME/2
+    });
+    setTimeout($.proxy(function (obj1_id, obj2_id, obj1_reset, obj2_reset) {
+        return $.proxy(function () {
+            this.objects[obj1_id].drawn_object.animate(obj1_reset);
+            this.objects[obj2_id].drawn_object.animate(obj2_reset);
+        }, this)
+    }, this)(obj1_id, obj2_id, obj1_reset, obj2_reset),
+        OBJECT_ANIMATION_TIME/2);
+    return OBJECT_ANIMATION_TIME
+}
 
 /*================================================================================================
 
