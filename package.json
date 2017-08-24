@@ -4,7 +4,8 @@
   "description": "A module for rendering and modifying rendered gridworlds in the browser.",
   "main": "gridworld_painter.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "demo_build": "browserify ./demo/index.js -o ./demo/bundle.js -d -t babelify --presets es2017"
   },
   "repository": {
     "type": "git",
@@ -26,5 +27,9 @@
     "pubsub-js": "^1.5.7",
     "q": "^1.5.0",
     "raphael": "2.1.4"
+  },
+  "devDependencies": {
+    "babel-preset-es2017": "^6.24.1",
+    "babelify": "^7.3.0"
   }
 }
