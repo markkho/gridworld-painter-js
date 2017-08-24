@@ -1,6 +1,6 @@
 {
   "name": "gridworld-painter",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "A module for rendering and modifying rendered gridworlds in the browser.",
   "main": "gridworld_painter.js",
   "scripts": {
