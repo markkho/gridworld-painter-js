@@ -24,5 +24,29 @@ $(document).ready(function () {
     painter.add_object("rect", "obj3", {"fill" : "green"});
     painter.draw_object(3, 3, '>', "obj3");
 
+    painter.add_object("circle", "obj4",
+        {"fill" : 'orange', 'stroke' : 'black'});
+    painter.draw_object(1, 1, '>', 'obj4');
+    painter.animate_object_movement({
+        action : '<',
+        new_x : 0,
+        new_y : 1,
+        object_id : 'obj4'
+    });
+
+    let t = painter.add_text(2, 0, "text", {fill : 'red', stroke : 'green'});
+    painter.float_text(4, 4, "float",
+        {
+            fill : 'red',
+            stroke : 'green',
+            "font-size" : 50
+        },
+        {
+            fill : 'green',
+            stroke : 'red',
+            "font-size" : 10
+        },
+        5000);
+
     window.painter = painter;
 });
