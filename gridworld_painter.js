@@ -19,6 +19,7 @@ var default_config = {
 	AGENT_COLORS : ['blue', 'green', 'red'],
 	PRIMARY_AGENT_COLOR : 'orange',
 	AGENT_WIDTH : .3,
+	WALL_WIDTH : .12,
 	WALL_STROKE_SIZE : 10,
 	CONTRACT_SIZE : .9,
 	SUBACTION_PROPORTION : .2,
@@ -132,7 +133,9 @@ GridWorldPainter.prototype.draw_tiles = function (tile_params) {
 		}, this))
 }
 
-GridWorldPainter.prototype.add_text = function(x, y, text) {
+GridWorldPainter.prototype.add_text = function(x, y, text, text_params) {
+	text_params = typeof(text_params) === 'undefined' ? {} : text_params;
+
 	var painter = this;
 	var params = {
 		type : 'text',
@@ -140,13 +143,26 @@ GridWorldPainter.prototype.add_text = function(x, y, text) {
 		y : (painter.y_to_h(y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
 		text : text,
 		"font-size" : painter.TILE_SIZE/text.length
-	}
+	};
+	_.merge(params, text_params);
 	var mytext = painter.paper.add([params])[0];
-	painter.annotations = typeof(painter.annotations) === 'undefined' ? [] : painter.annotations;
-	painter.annotations.push(mytext);
-}
+	return mytext
+};
 
-GridWorldPainter.prototype.float_text = function(x, y, text, params) {
+GridWorldPainter.prototype.float_text = function(x, y, text,
+                                                 pre_params,
+                                                 post_params,
+                                                 dx,
+                                                 dy,
+                                                 anim_type,
+                                                 anim_time) {
+    pre_params = typeof(pre_params) === 'undefined' ? {} : pre_params;
+    post_params = typeof(post_params) === 'undefined' ? {} : post_params;
+    anim_type = typeof(anim_type) === 'undefined' ? 'easeOutIn' : anim_type;
+    dx = typeof(dx) === 'undefined' ? 0 : dx;
+    dy = typeof(dy) === 'undefined' ? .5 : dy;
+    anim_time = typeof(anim_time) === 'undefined' ? painter.REWARD_DISPLAY_TIME : anim_time;
+
 	var painter = this;
 	var start_params = {
 		type : 'text',
@@ -155,17 +171,23 @@ GridWorldPainter.prototype.float_text = function(x, y, text, params) {
 		text : text,
 		"font-size" : painter.TILE_SIZE/text.length
 	};
-	_.merge(start_params, params);
+	_.merge(start_params, pre_params);
 	var mytext = painter.paper.add([start_params])[0];
 
-	var animate = Raphael.animation({
-			y : start_params.y-(painter.TILE_SIZE*.5),
-			opacity : 0
-		}, painter.REWARD_DISPLAY_TIME, 'easeOutIn', function () {
+    var animate_params = {
+        y : start_params.y+(painter.TILE_SIZE*(-dy)),
+        x : start_params.x+(painter.TILE_SIZE*(dx)),
+        opacity : 0
+    };
+    _.merge(animate_params, post_params);
+	var animate = Raphael.animation(animate_params,
+        anim_time,
+        anim_type,
+        function () {
 			mytext.remove();
 		});
 	mytext.animate(animate);
-	return painter.REWARD_DISPLAY_TIME
+	return anim_time
 };
 
 GridWorldPainter.prototype.float_image = function(x, y, src, width, height,
@@ -193,15 +215,11 @@ GridWorldPainter.prototype.float_image = function(x, y, src, width, height,
 	return display_time
 }
 
-GridWorldPainter.prototype.draw_wall = function(x,y,side, params) {
+GridWorldPainter.prototype.draw_wall = function(x, y, side, id, params) {
 	params = typeof(params) === 'undefined' ? {} : params;
 	var painter = this;
-	var wall_width = .025;
+	var wall_width = this.WALL_WIDTH;
 	y = painter.y_to_h(y);
-
-	if (typeof(painter.walls) === 'undefined') {
-		painter.walls = [];
-	}
 
 	if (typeof(side) === 'undefined') {
 		var default_wall_params = {
@@ -215,46 +233,52 @@ GridWorldPainter.prototype.draw_wall = function(x,y,side, params) {
 		};
 		_.defaults(params, default_wall_params);
 		var wall = painter.paper.add([params])[0];
-		painter.tiles.push(wall);
 	} else {
 	    var start_x, start_y, end_x, end_y;
 		if (side === '>') {
-			start_x = x + 1 - wall_width/2;
+			start_x = x + 1 - wall_width;
 			start_y = y;
-			end_x = x + 1 - wall_width/2;
-			end_y = y + 1;
+			height = 1;
+			width = wall_width;
 		}
 		else if (side === 'v') {
-			start_x = x;
-			start_y = y+1-wall_width/2;
-			end_x = x + 1;
-			end_y = y+1-wall_width/2;
+		    start_x = x;
+		    start_y = y+1-wall_width;
+		    height = wall_width;
+		    width = 1;
 		}
 		else if (side === '<') {
-			start_x = x+wall_width/2;
-			start_y = y;
-			end_x = x+wall_width/2;
-			end_y = y + 1;
+		    start_x = x;
+		    start_y = y;
+		    height = 1;
+		    width = wall_width;
 		}
 		else if (side === '^') {
-			start_x = x;
-			start_y = y+wall_width/2;
-			end_x = x + 1;
-			end_y = y+wall_width/2;
+		    start_x = x;
+		    start_y = y;
+		    height = wall_width;
+		    width = 1;
 		}
 
-		start_x = start_x*painter.TILE_SIZE+painter.DISPLAY_BORDER;
-		start_y = start_y*painter.TILE_SIZE+painter.DISPLAY_BORDER;
-		end_x = end_x*painter.TILE_SIZE+painter.DISPLAY_BORDER;
-		end_y = end_y*painter.TILE_SIZE+painter.DISPLAY_BORDER;
-		var wall = painter.paper.path(["M",start_x,start_y,'L',end_x, end_y]);
-
-		params = _.cloneDeep(params);
-		_.defaults(params, {stroke: 'black', 'stroke-width':wall_width*painter.TILE_SIZE});
-		wall.attr(params);
-		painter.walls.push(wall);
+		var default_wall_params = {
+			fill : '#000000',
+			type : 'rect',
+			x : start_x*this.TILE_SIZE+painter.DISPLAY_BORDER,
+			y : start_y*this.TILE_SIZE+painter.DISPLAY_BORDER,
+			width : width*this.TILE_SIZE,
+			height : height*this.TILE_SIZE,
+			stroke : 'black',
+            // "stroke-weight" : 2
+		};
+		_.defaults(params, default_wall_params);
+		var wall = painter.paper.add([params])[0];
 	}
-
+    painter.objects[id] = {
+        object_type : "wall",
+        object_id : id, 
+        object_params : params,
+        drawn_object : wall
+    };
 }
 
 GridWorldPainter.prototype.draw_walls = function(walls) {
@@ -264,14 +288,15 @@ GridWorldPainter.prototype.draw_walls = function(walls) {
 	}
 }
 
-/*================================================================================================
+/*=============================================================================
 
 
-							Initializing, Drawing, and Clearing Objects
+				  Initializing, Drawing, and Clearing Objects
 
 
-================================================================================================*/
-GridWorldPainter.prototype.add_object = function(object_type, object_id, object_params) {
+=============================================================================*/
+GridWorldPainter.prototype.add_object = function
+    (object_type, object_id, object_params) {
 	//support for circle, rect, and sprite - default values are set here
 	var painter = this;
 	if (object_type == 'circle') {
@@ -303,7 +328,7 @@ GridWorldPainter.prototype.add_object = function(object_type, object_id, object_
 			orientation_step_to_row_col : orientation_step_to_row_col,
 			x_adj : 0,
 			y_adj: -5
-		})
+		});
 	}
 	painter.objects[object_id] = {
 		object_type : object_type,
@@ -482,12 +507,19 @@ GridWorldPainter.prototype._update_sprite = function(object_id, params) {
 		}
 	);
 	_.assign(sprite_params, params, {sheet_cols : s_col, sheet_rows : s_row});
-}
+};
 
 
-GridWorldPainter.prototype.animate_object_movement = function (action, new_x, new_y, object_id, anim_type) {
+GridWorldPainter.prototype.animate_object_movement = function
+    ({action, new_x, new_y,
+     object_id,
+     anim_type = 'easeInOut',
+     distance = 1,
+	 OBJECT_ANIMATION_TIME = this.OBJECT_ANIMATION_TIME}) {
 	var painter = this;
-	var OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+
+	new_x -= (new_x - painter.objects[object_id].object_params.grid_x)*(1-distance);
+	new_y -= (new_y - painter.objects[object_id].object_params.grid_y)*(1-distance);
 
 	/*========================================================================
 								Animate a circle
@@ -517,7 +549,7 @@ GridWorldPainter.prototype.animate_object_movement = function (action, new_x, ne
 			var move = Raphael.animation({
 					cx : (new_x + .5)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
 					cy : (painter.y_to_h(new_y)+.5)*painter.TILE_SIZE+painter.DISPLAY_BORDER
-				},OBJECT_ANIMATION_TIME, 'easeInOut');
+				},OBJECT_ANIMATION_TIME, anim_type);
 			drawn_object.animate(move);
 			object_params.grid_x = new_x;
 			object_params.grid_y = new_y;
@@ -573,7 +605,7 @@ GridWorldPainter.prototype.animate_object_movement = function (action, new_x, ne
 					y : (painter.y_to_h(new_y)+.5-rect_length/2)*painter.TILE_SIZE+painter.DISPLAY_BORDER,
 					width : rect_width*painter.TILE_SIZE,
 					height : rect_length*painter.TILE_SIZE
-				},OBJECT_ANIMATION_TIME, 'easeInOut');
+				},OBJECT_ANIMATION_TIME, anim_type);
 			drawn_object.animate(move);
 			object_params.grid_x = new_x;
 			object_params.grid_y = new_y;
@@ -659,7 +691,7 @@ GridWorldPainter.prototype.animate_object_movement = function (action, new_x, ne
 	}
 
 	return painter.OBJECT_ANIMATION_TIME;
-}
+};
 
 GridWorldPainter.prototype.kill_object_movement = function (object_id) {
 	if ((this.objects[object_id].object_type === 'circle') ||
@@ -682,8 +714,6 @@ GridWorldPainter.prototype.kill_object_movement = function (object_id) {
 		if (_.has(timers, 'kill_animation')) {
 			clearTimeout(timers.kill_animation);
 		}
-
-
 	}
 };
 
@@ -708,7 +738,7 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
         if (obj.object_type === 'circle') {
             return [obj.drawn_object.attr('cx'), obj.drawn_object.attr('cy')]
         }
-        else if (obj.object_type === 'rect') {
+        else if (_.includes(["rect", "wall"], obj.object_type)) {
             var cx = obj.drawn_object.attr('x') + obj.drawn_object.attr('width')/2;
             var cy = obj.drawn_object.attr('y') + obj.drawn_object.attr('height')/2;
             return [cx, cy]
@@ -728,7 +758,7 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
             var r = obj.drawn_object.attr('r');
             return _.map(unit_v, function(i) {return i*r})
         }
-        else if (obj.object_type === 'rect') {
+        else if (_.includes(["rect", "wall"], obj.object_type)) {
             var w = obj.drawn_object.attr('width')*(unit_v[0]/Math.abs(unit_v[0]));
             var h = obj.drawn_object.attr('height')*(unit_v[1]/Math.abs(unit_v[1]));
             var x_indir = [w/2, (w/2)*(unit_v[1]/unit_v[0])];
@@ -769,7 +799,7 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
             cy : obj1.drawn_object.attr('cy') + dobj1[1]
         }, OBJECT_ANIMATION_TIME, movement_mode);
     }
-    else if (obj1.object_type === 'rect') {
+    else if (_.includes(["rect", "wall"], obj1.object_type)) {
         move_obj1 = Raphael.animation({
             x : obj1.drawn_object.attr('x') + dobj1[0],
             y : obj1.drawn_object.attr('y') + dobj1[1]
@@ -783,7 +813,7 @@ GridWorldPainter.prototype.bring_objects_into_contact = function
             cy : obj2.drawn_object.attr('cy') + dobj2[1]
         }, OBJECT_ANIMATION_TIME, movement_mode);
     }
-    else if (obj2.object_type === 'rect') {
+    else if (_.includes(["rect", "wall"], obj2.object_type)) {
         move_obj2 = Raphael.animation({
             x : obj2.drawn_object.attr('x') + dobj2[0],
             y : obj2.drawn_object.attr('y') + dobj2[1]
@@ -805,7 +835,7 @@ GridWorldPainter.prototype.collide_and_return_objs = function
     }
     var OBJECT_ANIMATION_TIME;
     if (typeof(config.OBJECT_ANIMATION_TIME) === "undefined") {
-        OBJECT_ANIMATION_TIME = painter.OBJECT_ANIMATION_TIME;
+        OBJECT_ANIMATION_TIME = this.OBJECT_ANIMATION_TIME;
     }
     else {
         OBJECT_ANIMATION_TIME = config.OBJECT_ANIMATION_TIME;
@@ -820,12 +850,10 @@ GridWorldPainter.prototype.collide_and_return_objs = function
     this.bring_objects_into_contact(obj1_id, obj2_id, obj1_weight, 0, {
         OBJECT_ANIMATION_TIME : OBJECT_ANIMATION_TIME/2
     });
-    setTimeout($.proxy(function (obj1_id, obj2_id, obj1_reset, obj2_reset) {
-        return $.proxy(function () {
-            this.objects[obj1_id].drawn_object.animate(obj1_reset);
-            this.objects[obj2_id].drawn_object.animate(obj2_reset);
-        }, this)
-    }, this)(obj1_id, obj2_id, obj1_reset, obj2_reset),
+    setTimeout(function(obj1_id, obj2_id, obj1_reset, obj2_reset) {
+        this.objects[obj1_id].drawn_object.animate(obj1_reset);
+        this.objects[obj2_id].drawn_object.animate(obj2_reset);
+    }.bind(this, obj1_id, obj2_id, obj1_reset, obj2_reset),
         OBJECT_ANIMATION_TIME/2);
     return OBJECT_ANIMATION_TIME
 }
@@ -986,7 +1014,7 @@ GridWorldPainter.prototype.enable_drag_drop = function (object_id, orientation) 
 }
 
 GridWorldPainter.prototype.disable_drag_drop = function (object_id) {
-	if (typeof(object_id) == 'undefined') {
+	if (typeof(object_id) === 'undefined') {
 		console.warn("No object_id defined");
 	}
 	this.objects[object_id].drawn_object.undrag();
