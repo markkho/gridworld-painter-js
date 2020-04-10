@@ -129,12 +129,16 @@ GridWorldPainter.prototype.draw_tiles = function (tile_params) {
 			params = _.cloneDeep(params);
 			_.defaults(params, default_tile_params);
 			var tile = this.paper.add([params])[0];
+			tile.grid_xy = xy;
 			this.tiles.push(tile);
 		}, this))
 }
 
-GridWorldPainter.prototype.add_text = function(x, y, text, text_params) {
-	text_params = typeof(text_params) === 'undefined' ? {} : text_params;
+GridWorldPainter.prototype.add_text = function({
+                                                   x,
+                                                   y,
+                                                   text,
+                                                   text_params = {}}) {
 
 	var painter = this;
 	var params = {
@@ -144,24 +148,26 @@ GridWorldPainter.prototype.add_text = function(x, y, text, text_params) {
 		text : text,
 		"font-size" : painter.TILE_SIZE/text.length
 	};
-	_.merge(params, text_params);
+	_.assign(params, text_params);
 	var mytext = painter.paper.add([params])[0];
 	return mytext
 };
 
-GridWorldPainter.prototype.float_text = function(x, y, text,
-                                                 pre_params,
-                                                 post_params,
-                                                 dx,
-                                                 dy,
-                                                 anim_type,
-                                                 anim_time) {
-    pre_params = typeof(pre_params) === 'undefined' ? {} : pre_params;
-    post_params = typeof(post_params) === 'undefined' ? {} : post_params;
-    anim_type = typeof(anim_type) === 'undefined' ? 'easeOutIn' : anim_type;
-    dx = typeof(dx) === 'undefined' ? 0 : dx;
-    dy = typeof(dy) === 'undefined' ? .5 : dy;
-    anim_time = typeof(anim_time) === 'undefined' ? painter.REWARD_DISPLAY_TIME : anim_time;
+GridWorldPainter.prototype.float_text = function({
+                                     x, y, text,
+                                     pre_params = {},
+                                     post_params = {},
+                                     dx = 0,
+                                     dy = .5,
+                                     anim_type = 'easeOutIn',
+                                     anim_time = this.REWARD_DISPLAY_TIME
+}) {
+    // pre_params = typeof(pre_params) === 'undefined' ? {} : pre_params;
+    // post_params = typeof(post_params) === 'undefined' ? {} : post_params;
+    // anim_type = typeof(anim_type) === 'undefined' ? 'easeOutIn' : anim_type;
+    // dx = typeof(dx) === 'undefined' ? 0 : dx;
+    // dy = typeof(dy) === 'undefined' ? .5 : dy;
+    // anim_time = typeof(anim_time) === 'undefined' ? painter.REWARD_DISPLAY_TIME : anim_time;
 
 	var painter = this;
 	var start_params = {
@@ -171,7 +177,7 @@ GridWorldPainter.prototype.float_text = function(x, y, text,
 		text : text,
 		"font-size" : painter.TILE_SIZE/text.length
 	};
-	_.merge(start_params, pre_params);
+	_.assign(start_params, pre_params);
 	var mytext = painter.paper.add([start_params])[0];
 
     var animate_params = {
@@ -179,7 +185,7 @@ GridWorldPainter.prototype.float_text = function(x, y, text,
         x : start_params.x+(painter.TILE_SIZE*(dx)),
         opacity : 0
     };
-    _.merge(animate_params, post_params);
+    _.assign(animate_params, post_params);
 	var animate = Raphael.animation(animate_params,
         anim_time,
         anim_type,
@@ -201,7 +207,7 @@ GridWorldPainter.prototype.float_image = function(x, y, src, width, height,
 		width : width,
 		height : height
 	}
-	_.merge(start_params, params);
+	_.assign(start_params, params);
 	var my_img = this.paper.add([start_params])[0];
 	var animate = Raphael.animation({
 		y : start_params.y-(this.TILE_SIZE*.5),
@@ -1018,6 +1024,23 @@ GridWorldPainter.prototype.disable_drag_drop = function (object_id) {
 		console.warn("No object_id defined");
 	}
 	this.objects[object_id].drawn_object.undrag();
+}
+
+GridWorldPainter.prototype.enable_on_tile_click = function (handler) {
+	//callback will be given context with tile in it
+	this.click_handlers = [];
+	for (var i = 0; i < this.tiles.length; i++) {
+		var bound_handler = handler.bind(this, this.tiles[i])
+		this.tiles[i].click(bound_handler);
+		this.click_handlers.push(bound_handler);
+	}
+}
+
+GridWorldPainter.prototype.disable_on_tile_click = function () {
+	for (var i = 0; i < this.tiles.length; i++) {
+		var bound_handler = this.click_handlers[i];
+		this.tiles[i].unclick(bound_handler);
+	}
 }
 
 

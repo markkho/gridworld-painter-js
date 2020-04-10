@@ -34,19 +34,27 @@ $(document).ready(function () {
         object_id : 'obj4'
     });
 
-    let t = painter.add_text(2, 0, "text", {fill : 'red', stroke : 'green'});
-    painter.float_text(4, 4, "float",
-        {
+    let t = painter.add_text({
+        x : 2,
+        y : 0,
+        text : "text",
+        text_params : {fill : 'red', stroke : 'green'}
+    });
+    painter.float_text({
+        x : 4,
+        y : 4,
+        text : "float",
+        pre_params : {
             fill : 'red',
             stroke : 'green',
             "font-size" : 50
         },
-        {
+        post_params : {
             fill : 'green',
             stroke : 'red',
             "font-size" : 10
         },
-        5000);
+        anim_time : 5000});
 
     window.painter = painter;
 });
